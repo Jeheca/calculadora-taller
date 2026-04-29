@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/index.js",
     "lint": "eslint src/",
-    "test": "jest"
+    "test": "jest --coverage",
+    "test:ci": "jest --coverage --ci --reporters=default"
   },
   "keywords": [
     "calculadora",
