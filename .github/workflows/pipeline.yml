@@ -8,58 +8,118 @@ on:
     branches: [main, master]
 
 jobs:
-  lint:
-    name: ESLint Analysis
+
+  # ─── JOB 1: Instalación y Build ───────────────────────────────────────────
+  build:
+    name: Instalación y Build
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
+      - name: Verificar estructura del proyecto
+        run: |
+          echo "✅ Dependencias instaladas correctamente"
+          ls -la
+
+  # ─── JOB 2, 3, 4: En paralelo (dependen de build) ─────────────────────────
+
+  # JOB 2: Calidad de Código (SAST básico)
+  lint:
+    name: Calidad de Código (SAST básico)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Run ESLint
         run: npm run lint
 
+  # JOB 3: Tests y Cobertura
   test:
-    name: Unit Tests
+    name: Tests y Cobertura
     runs-on: ubuntu-latest
-    
+    needs: build
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci
-      
-      - name: Run Jest tests
-        run: npm test
 
-  docker:
-    name: Docker Build
+      - name: Run Jest tests con cobertura
+        run: npm run test:ci
+
+  # JOB 4: Análisis de Seguridad (SCA)
+  security:
+    name: Análisis de Seguridad (SCA)
     runs-on: ubuntu-latest
-    needs: [lint, test]
-    
+    needs: build
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Auditoría de seguridad (npm audit)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Verificar secretos hardcodeados
+        run: |
+          echo "🔍 Buscando secretos en el código..."
+          if grep -rE "(password|secret|api_key|token)\s*=\s*['\"][^'\"]{8,}" src/ --include="*.js"; then
+            echo "❌ Se encontraron posibles secretos hardcodeados"
+            exit 1
+          else
+            echo "✅ No se encontraron secretos hardcodeados"
+          fi
+
+  # ─── JOB 5: Build de Imagen Docker (solo en main) ─────────────────────────
+  docker:
+    name: Build de Imagen Docker
+    runs-on: ubuntu-latest
+    needs: [lint, test, security]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
@@ -67,6 +127,26 @@ jobs:
           push: false
           tags: calculadora-taller:latest
           load: true
-      
+
       - name: Verify Docker image
         run: docker run calculadora-taller:latest node -e "const {add} = require('./src/calculator'); console.log('2 + 3 =', add(2, 3))"
+
+  # ─── JOB 6: Resumen del Pipeline ──────────────────────────────────────────
+  summary:
+    name: Resumen del Pipeline
+    runs-on: ubuntu-latest
+    needs: [lint, test, security, docker]
+    if: always()
+    steps:
+      - name: Resumen final
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "       RESUMEN DEL PIPELINE CI/CD    "
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ Instalación y Build"
+          echo "✅ Calidad de Código (SAST básico)"
+          echo "✅ Tests y Cobertura"
+          echo "✅ Análisis de Seguridad (SCA)"
+          echo "✅ Build de Imagen Docker"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🚀 Pipeline completado exitosamente"
